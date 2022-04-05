@@ -1,0 +1,295 @@
+---
+title: "STAT 443 Project"
+author: "Shaoyi Huang 20775342"
+date: "2022/3/30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(astsa)
+```
+
+
+```{r}
+da <- read.csv("finaldata.csv")
+plot(da$Global_active_power, type = "l")
+power <- na.omit(da)
+```
+
+
+\newpage
+## step 1 Training and Validation set
+
+```{r}
+index = which(power$Date == "31/8/2010")
+train.data = power$Global_active_power[1:index]
+valid.data = power$Global_active_power[-(1:index)]
+plot(train.data, type = "l", xlab = "Index", ylab = "ActivePower(KiloWatt)",
+     ylim = c(0, 5000), xlim = c(0, 1433), main = "Household Power Consumption Data")
+lines((index + 1):length(power$Global_active_power), valid.data, col = "red")
+abline(v = index, lty = 2)
+legend(1000, 5000, legend=c("Training set", "Test set"),
+       col=c("black", "red"), lty=1:1, cex=0.8)
+```
+
+\newpage
+## step 2 Regression Model
+
+```{r}
+acf(train.data, na.action = na.pass)
+```
+
+
+
+\newpage
+```{r}
+acf(diff(train.data), na.action = na.pass)
+```
+
+\newpage
+
+```{r}
+day = 1:index
+day.new = (index + 1):length(power$Global_active_power)
+train_weeks = as.integer(length(train.data) / 7)
+train_rest = length(train.data) - train_weeks*7
+test_weeks = as.integer(length(valid.data) / 7)
+test_rest = length(valid.data) - test_weeks*7
+week = as.factor(c(rep(1:7, train_weeks), 1:train_rest))
+week.new = as.factor(c(rep(1:7, test_weeks), 1:test_rest))
+mse.reg = rep(0, 10)
+mse.reg.withseasonal = rep(0, 10)
+for (i in 1:10) {
+  mod.reg1 = lm(train.data ~ poly(day, i))
+  pred.reg1 = predict(mod.reg1, data.frame(day = day.new))
+  mse.reg[i] = mean((pred.reg1 - valid.data) ^ 2)
+  mod.reg2 = lm(train.data ~ poly(day, i) + week)
+  pred.reg2 = predict(mod.reg2, data.frame(day = day.new, week = week.new))
+  mse.reg.withseasonal[i] = mean((pred.reg2 - valid.data) ^ 2)
+}
+cbind(mse.reg, mse.reg.withseasonal)
+```
+\newpage
+```{r}
+best = which.min(mse.reg)
+mod.reg = lm(train.data ~ poly(day, best) + week)
+#mod.reg = lm(train.data ~ poly(day, best))
+par(mfrow = c(2, 2))
+plot(mod.reg$fitted, mod.reg$residuals)
+abline(h = 0, lty = 2, col = "red")
+qqnorm(mod.reg$residuals)
+qqline(mod.reg$residuals)
+plot(mod.reg$residuals)
+abline(h = 0, lty = 2, col = "red")
+acf(mod.reg$residuals)
+```
+
+
+\newpage
+```{r}
+day = 1:length(power$Global_active_power)
+week = as.factor(c(rep(1:7, 204), 1:5))
+final.reg = lm(power$Global_active_power ~ poly(day, best) + week)
+day.new = length(power$Global_active_power) + (1:30)
+week.new = as.factor(c(1:2, rep(1:7, 4)))
+predict.reg = predict(final.reg, data.frame(day = day.new,
+week = week.new), interval = "prediction")
+predict.reg
+```
+
+
+\newpage
+```{r}
+plot(power$Global_active_power, xlim = c(1, 1500), type = "l",
+ylim = c(0, 5000), xlab = "Day", ylab = "Global_active_power")
+lines(day.new, predict.reg[, 1], col = "red", lwd = 2)
+lines(day.new, predict.reg[, 2], col = "blue", lwd = 2)
+lines(day.new, predict.reg[, 3], col = "blue", lwd = 2)
+abline(v = length(power$Global_active_power), col = "blue", lty = 2)
+```
+
+
+\newpage
+## step 3 Smoothing
+```{r}
+# simple 
+train.data.ts = ts(train.data, start = 1, frequency = 7)
+es <- HoltWinters(train.data.ts, gamma = FALSE, beta = FALSE)
+c(es$alpha, es$beta, es$gamma)
+HW.predict = predict(es, n.ahead = length(valid.data))
+mse1 = mean((valid.data - HW.predict) ^ 2)
+mse1
+```
+
+```{r}
+# double
+hw <- HoltWinters(train.data.ts, gamma = FALSE)
+c(hw$alpha, hw$beta, hw$gamma)
+HW.predict = predict(hw, n.ahead = length(valid.data))
+mse2 = mean((valid.data - HW.predict) ^ 2)
+mse2
+```
+
+```{r}
+# Holt Winters additive
+hw.additive <- HoltWinters(train.data.ts, seasonal = "additive")
+c(hw.additive$alpha, hw.additive$beta, hw.additive$gamma)
+HW.predict = predict(hw.additive, n.ahead = length(valid.data))
+mse3 = mean((valid.data - HW.predict) ^ 2)
+mse3
+```
+
+```{r}
+# Holt Winters multiplicative
+hw.multiplicative <- HoltWinters(train.data.ts, seasonal = "multiplicative")
+c(hw.multiplicative$alpha, hw.multiplicative$beta, hw.multiplicative$gamma)
+HW.predict = predict(hw.multiplicative, n.ahead = length(valid.data))
+mse4 = mean((valid.data - HW.predict) ^ 2)
+mse4
+```
+
+```{r}
+#par(mfrow=c(2,1))
+hw.final <- HoltWinters(ts(train.data, frequency = 7),
+                        seasonal = "additive")
+plot(hw.final, predict(hw.final, n.ahead = length(valid.data), prediction.interval = TRUE))
+c(hw.final$alpha, hw.final$beta, hw.final$gamma)
+
+hw.residual = hw.final$fitted[,1] - train.data[1:length(hw.final$fitted[,1])]
+
+par(mfrow=c(2,2))
+plot(train.data[1:length(hw.final$fitted[,1])], hw.residual, main = "Residuals vs Fitted")
+
+qqnorm(hw.residual)
+
+hist(hw.residual)
+
+plot(hw.residual, main = "Residuals vs Time")
+```
+
+```{r}
+hw.final <- HoltWinters(ts(power$Global_active_power, frequency = 7),
+                        seasonal = "additive")
+plot(hw.final, predict(hw.final, n.ahead = length(valid.data), prediction.interval = TRUE))
+c(hw.final$alpha, hw.final$beta, hw.final$gamma)
+
+
+```
+
+\newpage
+## model 3  Box-Jenkins
+
+```{r}
+par(mfrow = c(2,1))
+acf(train.data)
+pacf(train.data)
+```
+
+```{r}
+par(mfrow = c(2,1))
+diff.train.data = diff(train.data)
+plot(diff.train.data, type = "l", main="Data with difference = 1")
+acf(diff.train.data)
+pacf(diff.train.data)
+```
+
+
+```{r}
+par(mfrow = c(2,1))
+diff.train.data.sea = diff(diff.train.data, lag = 7)
+#plot(diff.train.data.sea, type = "l", main = "Differenced data with lag = 7")
+acf(diff.train.data.sea)
+pacf(diff.train.data.sea)
+```
+
+```{r}
+#model1 = sarima(train.data, p = 0, d = 1, q = 1, P = 0, D = 1, Q = 1, S = 7)
+#model2 = sarima(train.data, p = 1, d = 1, q = 1, P = 0, D = 1, Q = 1, S = 7)
+
+evaluation = matrix(1:36, 12, 3)
+msepred = rep(0, 12)
+model1 = sarima(train.data, p = 0, d = 1, q = 7, P = 0, D = 1, Q = 1, S = 7)
+evaluation[1,] = c(model1$AIC, model1$AICc, model1$BIC)
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data), p = 0, d = 1, q = 7,
+                       P = 0, D = 1, Q = 1, S = 7)
+msepred[1] = mean((valid.data - pred.mod$pred)^2)
+
+model2 = sarima(train.data, p = 0, d = 1, q = 7, P = 0, D = 1, Q = 2, S = 7) # good
+evaluation[2,] = c(model2$AIC, model2$AICc, model2$BIC)
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data), p = 0, d = 1, q = 7, P = 0, D = 1, Q = 2, S = 7)
+msepred[2] = mean((valid.data - pred.mod$pred)^2)
+
+model3 = sarima(train.data, p = 0, d = 1, q = 7, P = 2, D = 1, Q = 0, S = 7)
+evaluation[3,] = c(model3$AIC, model3$AICc, model3$BIC)
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data), p = 0, d = 1, q = 7, P = 2, D = 1, Q = 0, S = 7)
+msepred[3] = mean((valid.data - pred.mod$pred)^2)
+
+model4 = sarima(train.data, p = 0, d = 1, q = 7, P = 1, D = 1, Q = 1, S = 7) # good
+evaluation[4,] = c(model4$AIC, model4$AICc, model4$BIC)
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data), p = 0, d = 1, q = 7, P = 1, D = 1, Q = 1, S = 7)
+msepred[4] = mean((valid.data - pred.mod$pred)^2)
+
+
+model5 = sarima(train.data, p = 1, d = 1, q = 1, P = 0, D = 1, Q = 1, S = 7)
+evaluation[5,] = c(model5$AIC, model5$AICc, model5$BIC)
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data), p = 1, d = 1, q = 1, P = 0, D = 1, Q = 1, S = 7)
+msepred[5] = mean((valid.data - pred.mod$pred)^2)
+
+model6 = sarima(train.data, p = 1, d = 1, q = 1, P = 0, D = 1, Q = 2, S = 7)
+evaluation[6,] = c(model6$AIC, model6$AICc, model6$BIC)
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data), p = 1, d = 1, q = 1, P = 0, D = 1, Q = 2, S = 7)
+msepred[6] = mean((valid.data - pred.mod$pred)^2)
+
+model7 = sarima(train.data, p = 1, d = 1, q = 1, P = 2, D = 1, Q = 0, S = 7)
+evaluation[7,] = c(model7$AIC, model7$AICc, model7$BIC)
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data), p = 1, d = 1, q = 1, P = 2, D = 1, Q = 0, S = 7)
+msepred[7] = mean((valid.data - pred.mod$pred)^2)
+
+model8 = sarima(train.data, p = 1, d = 1, q = 1, P = 1, D = 1, Q = 1, S = 7)
+evaluation[8,] = c(model8$AIC, model8$AICc, model8$BIC)
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data), p = 1, d = 1, q = 1, P = 1, D = 1, Q = 1, S = 7)
+msepred[8] = mean((valid.data - pred.mod$pred)^2)
+
+
+model9 = sarima(train.data, p = 1, d = 1, q = 7, P = 0, D = 1, Q = 1, S = 7)
+evaluation[9,] = c(model9$AIC, model9$AICc, model9$BIC)
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data), p = 1, d = 1, q = 7, P = 0, D = 1, Q = 1, S = 7)
+msepred[9] = mean((valid.data - pred.mod$pred)^2)
+
+model10 = sarima(train.data, p = 1, d = 1, q = 7, P = 0, D = 1, Q = 2, S = 7) # fine
+evaluation[10,] = c(model10$AIC, model10$AICc, model10$BIC)
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data), p = 1, d = 1, q = 7, P = 0, D = 1, Q = 2, S = 7)
+msepred[10] = mean((valid.data - pred.mod$pred)^2)
+
+model11 = sarima(train.data, p = 1, d = 1, q = 7, P = 2, D = 1, Q = 0, S = 7) 
+evaluation[11,] = c(model11$AIC, model11$AICc, model11$BIC)
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data), p = 1, d = 1, q = 7, P = 2, D = 1, Q = 0, S = 7)
+msepred[11] = mean((valid.data - pred.mod$pred)^2)
+
+model12 = sarima(train.data, p = 1, d = 1, q = 7, P = 1, D = 1, Q = 1, S = 7) # fine
+evaluation[12,] = c(model12$AIC, model12$AICc, model12$BIC)
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data), p = 1, d = 1, q = 7, P = 1, D = 1, Q = 1, S = 7)
+msepred[12] = mean((valid.data - pred.mod$pred)^2)
+
+```
+
+```{r}
+pred.mod = sarima.for(train.data, n.ahead = length(valid.data),  p= 1, d = 1, q = 7, P = 2, D = 1, Q = 0, S = 7)
+sarima.for(power$Global_active_power, n.ahead = length(valid.data),  p= 1, d = 1, q = 7, P = 2, D = 1, Q = 0, S = 7)
+
+par(mfrow=c(2,1))
+plot(valid.data, type="l")
+plot(pred.mod$pred, type="l")
+
+FinalFit <- sarima(power$Global_active_power,p = 1, d = 1, q = 7, P = 2, D = 1, Q = 0, S = 7)
+future.forecast <- sarima.for(power$Global_active_power, n.ahead=length(valid.data), 
+                              p = 1, d = 1, q = 7, P = 2, D = 1, Q = 0, S = 7)
+lower <- future.forecast$pred-1.96*future.forecast$se
+upper <- future.forecast$pred+1.96*future.forecast$se
+fit <- future.forecast$pred
+```
