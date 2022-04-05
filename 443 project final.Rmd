@@ -1,8 +1,8 @@
 ---
 title: "STAT 443 Project"
-author: "Shaoyi Huang 20775342"
+author: "Group25:Haocheng Chang, Shaoyi Huang, Ziyi Pan, Jie Zhou"
 date: "2022/3/30"
-output: html_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
